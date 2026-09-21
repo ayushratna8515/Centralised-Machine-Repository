@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Machine Repository — FATP &amp; MLB Lines</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">🏭</span>
+      <h1>Machine Repository</h1>
+      <span class="subtitle">FATP &amp; MLB lines · asset record</span>
+    </div>
+    <div class="search-wrap">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+      <input type="text" id="search-input" placeholder="Search machine, ID, vendor…" aria-label="Search machines">
+    </div>
+    <span class="sync-badge" id="sync-badge"><span class="sync-dot" id="sync-dot"></span><span id="sync-text">Connecting…</span></span>
+    <span class="view-only-tag" id="view-only-tag" style="display:none;">View only</span>
+    <button class="btn btn-ghost icon-btn" id="theme-toggle" title="Switch to dark mode" aria-label="Toggle day/night mode"></button>
+    <button class="btn btn-sm" id="export-btn">Export CSV</button>
+    <button class="btn btn-primary" id="add-btn">+ Add machine</button>
+  </header>
+
+  <div class="site-tabs" id="site-tabs"></div>
+
+  <div class="banner">Data syncs live across everyone with access to this link. Anyone with the link can edit or log repairs in this POC build. Adding a new machine additionally requires the Engineering passphrase.</div>
+
+  <div id="attention-panel"></div>
+  <div class="lines-overview" id="lines-overview"></div>
+  <div class="stat-strip" id="stat-strip"></div>
+
+  <main class="layout">
+    <aside class="filters" id="filters">
+      <div class="filter-group">
+        <label for="f-majorLine">Line</label>
+        <select id="f-majorLine">
+          <option value="">All lines</option>
+          <option>FATP Main Line</option>
+          <option>FATP RE</option>
+          <option>MLB Main Line</option>
+          <option>MLB RE</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label for="f-subLine">Sub-line</label>
+        <select id="f-subLine">
+          <option value="">All sub-lines</option>
+          <option>L1</option><option>L2</option><option>L3</option><option>L4</option><option>L5</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label for="f-status">Status</label>
+        <select id="f-status">
+          <option value="">All statuses</option>
+          <option value="Operational">Operational</option>
+          <option value="Under Maintenance">Under maintenance</option>
+          <option value="Idle">Idle</option>
+          <option value="Decommissioned">Decommissioned</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label for="f-criticality">Criticality</label>
+        <select id="f-criticality">
+          <option value="">All levels</option>
+          <option value="High">High</option>
+          <option value="Medium">Medium</option>
+          <option value="Low">Low</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label for="f-vendor">Vendor</label>
+        <select id="f-vendor"><option value="">All vendors</option></select>
+      </div>
+      <button class="btn btn-ghost btn-sm filter-reset" id="reset-filters">Reset filters</button>
+    </aside>
+
+    <div class="content">
+      <div class="table-scroll" id="table-scroll">
+        <table class="machines" id="machines-table">
+          <thead>
+            <tr id="table-head-row"></tr>
+          </thead>
+          <tbody id="table-body"></tbody>
+        </table>
+        <div class="empty-state" id="empty-state" style="display:none;">
+          <h3>No machines match here</h3>
+          <p>Try resetting filters, or add the first machine to this repository.</p>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="overlay" id="overlay"></div>
+<div class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
+  <div class="drawer-head">
+    <h2 id="drawer-title">Add machine</h2>
+    <span class="view-only-tag" id="drawer-view-only-tag" style="display:none;">View only</span>
+    <button class="btn btn-ghost btn-sm" id="drawer-close" aria-label="Close">✕</button>
+  </div>
+  <div class="drawer-body">
+    <form id="machine-form">
+
+      <div class="field-section">
+        <h3>Photo</h3>
+        <div class="photo-frame" id="photo-frame"></div>
+        <div class="photo-actions">
+          <button type="button" class="btn btn-sm" id="upload-photo-btn">Upload photo</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="remove-photo-btn" style="display:none;">Remove photo</button>
+          <input type="file" id="photo-input" accept="image/png,image/jpeg,image/webp,image/gif" class="visually-hidden">
+        </div>
+        <div class="field">
+          <label for="in-machineType">Equipment type (used for the icon shown when no photo is set)</label>
+          <select id="in-machineType">
+            <option value="robot">Robotic arm / fastening</option>
+            <option value="tester">Functional / ICT tester</option>
+            <option value="scanner">Barcode / label scanner</option>
+            <option value="aoi">Optical inspection (AOI)</option>
+            <option value="xray">X-ray inspection</option>
+            <option value="laser">Laser marking</option>
+            <option value="packer">Packing / sealing</option>
+            <option value="rework">Rework station</option>
+            <option value="dispenser">Dispensing system</option>
+            <option value="mounter">Pick-and-place mounter</option>
+            <option value="printer">Screen printer</option>
+            <option value="oven">Reflow oven</option>
+            <option value="chamber">Environmental chamber</option>
+            <option value="generic">Generic equipment</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="field-section">
+        <h3>Identity</h3>
+        <div class="field-row">
+          <div class="field">
+            <label for="in-site">Site</label>
+            <select id="in-site"><option>Chennai</option><option>Hosur</option><option>Narsapura</option></select>
+          </div>
+          <div class="field"><label for="in-machineId">Machine ID</label><input id="in-machineId" required placeholder="MC-101"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label for="in-name">Name</label><input id="in-name" required placeholder="Screw Fastening Robot"></div>
+          <div class="field">
+            <label for="in-majorLine">Line</label>
+            <select id="in-majorLine">
+              <option>FATP Main Line</option><option>FATP RE</option><option>MLB Main Line</option><option>MLB RE</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="in-subLine">Sub-line</label>
+            <select id="in-subLine">
+              <option value="">—</option><option>L1</option><option>L2</option><option>L3</option><option>L4</option><option>L5</option>
+            </select>
+          </div>
+          <div class="field"><label for="in-vendor">Vendor</label><input id="in-vendor" placeholder="Kawasaki Robotics"></div>
+        </div>
+        <div class="field"><label for="in-maintenanceOwner">Maintenance owner (team)</label><input id="in-maintenanceOwner" placeholder="FATP Maintenance Team A"></div>
+      </div>
+
+      <div class="field-section">
+        <h3>Direct Responsible Individual (DRI)</h3>
+        <div class="field-row">
+          <div class="field"><label for="in-driName">Name</label><input id="in-driName" placeholder="Priya Raman"></div>
+          <div class="field"><label for="in-driDepartment">Department</label><input id="in-driDepartment" placeholder="Manufacturing Engineering"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label for="in-driEmail">Email</label><input id="in-driEmail" type="email" placeholder="priya.raman@company.com"></div>
+          <div class="field"><label for="in-driPhone">Phone</label><input id="in-driPhone" type="tel" placeholder="+91 98765 43210"></div>
+        </div>
+      </div>
+
+      <div class="field-section">
+        <h3>Financials (₹)</h3>
+        <div class="field-row">
+          <div class="field"><label for="in-cost">Purchase cost</label><input id="in-cost" type="number" min="0" placeholder="1800000"></div>
+          <div class="field"><label for="in-purchaseDate">Purchase date</label><input id="in-purchaseDate" type="date"></div>
+        </div>
+        <div class="field"><label for="in-eolDate">Expected end of life</label><input id="in-eolDate" type="date"></div>
+      </div>
+
+      <div class="field-section">
+        <h3>Maintenance &amp; status</h3>
+        <div class="field-row">
+          <div class="field"><label for="in-cycle">Maintenance cycle (days)</label><input id="in-cycle" type="number" min="0" placeholder="60"></div>
+          <div class="field"><label for="in-lastService">Last service date</label><input id="in-lastService" type="date"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label for="in-nextService">Next service due</label><input id="in-nextService" type="date"></div>
+          <div class="field">
+            <label for="in-status">Status</label>
+            <select id="in-status"><option>Operational</option><option>Under Maintenance</option><option>Idle</option><option>Decommissioned</option></select>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="in-criticality">Criticality</label>
+            <select id="in-criticality"><option>High</option><option>Medium</option><option>Low</option></select>
+          </div>
+          <div class="field">
+            <label for="in-condition">Condition</label>
+            <select id="in-condition"><option>Good</option><option>Fair</option><option>Poor</option></select>
+          </div>
+        </div>
+      </div>
+
+      <div class="field-section">
+        <h3>Usage</h3>
+        <div class="field"><label for="in-purpose">Purpose</label><textarea id="in-purpose" placeholder="What this machine is used for"></textarea></div>
+        <div class="field"><label for="in-consumables">Consumables used (comma separated)</label><input id="in-consumables" placeholder="Screw bits, Torque calibration kit"></div>
+      </div>
+
+      <div class="field-section">
+        <h3>Repurpose / CapEx notes</h3>
+        <div class="field"><textarea id="in-repurpose" placeholder="Redeployment potential, replacement recommendation, or other notes for CapEx review"></textarea></div>
+      </div>
+
+      <div class="field-section">
+        <h3>Repair history</h3>
+        <div class="repair-log-list" id="repair-log-list"></div>
+        <div class="repair-add-form" id="repair-add-form">
+          <div class="field"><label for="in-repair-date">Date</label><input id="in-repair-date" type="date"></div>
+          <div class="field"><label for="in-repair-comment">Comment</label><textarea id="in-repair-comment" placeholder="What happened and what was done"></textarea></div>
+          <div class="repair-add-row">
+            <label><input type="checkbox" id="in-repair-downtime"> Caused downtime</label>
+            <input id="in-repair-hours" type="number" min="0" step="0.5" placeholder="Hours" style="width:90px; display:none;">
+          </div>
+          <button type="button" class="btn btn-sm" id="add-repair-entry-btn">Log entry</button>
+        </div>
+      </div>
+
+      <div class="danger-zone" id="danger-zone" style="display:none;">
+        <p>Removing a record only removes it from this repository — it doesn't affect the physical machine.</p>
+        <button type="button" class="btn btn-danger btn-sm" id="delete-btn">Delete record</button>
+      </div>
+    </form>
+  </div>
+  <div class="drawer-foot">
+    <button class="btn btn-primary" id="save-btn" style="flex:1;">Save machine</button>
+    <button class="btn" id="cancel-btn">Cancel</button>
+  </div>
+</div>
+
+<div class="dri-popover" id="dri-popover" role="dialog" aria-label="DRI contact card"></div>
+
+<div class="overlay" id="auth-overlay"></div>
+<div class="auth-modal" id="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+  <h2 id="auth-modal-title">Engineering access required</h2>
+  <p class="auth-modal-copy">Adding a new machine record is restricted to the Engineering team. Enter the Engineering passphrase to continue — everyone with edit access can still update existing records and log repairs without it.</p>
+  <div class="field"><label for="in-auth-passphrase">Passphrase</label><input id="in-auth-passphrase" type="password" autocomplete="off"></div>
+  <div class="auth-modal-error" id="auth-modal-error" style="display:none;"></div>
+  <div class="auth-modal-actions">
+    <button class="btn btn-primary" id="auth-unlock-btn" style="flex:1;">Unlock</button>
+    <button class="btn" id="auth-cancel-btn">Cancel</button>
+  </div>
+  <button type="button" class="auth-modal-toggle" id="auth-change-toggle">Change this passphrase (owner only)</button>
+  <div class="auth-change-form" id="auth-change-form" style="display:none;">
+    <div class="field"><label for="in-auth-new1">New passphrase</label><input id="in-auth-new1" type="password" autocomplete="off"></div>
+    <div class="field"><label for="in-auth-new2">Confirm new passphrase</label><input id="in-auth-new2" type="password" autocomplete="off"></div>
+    <button class="btn btn-sm" id="auth-change-save-btn">Save new passphrase</button>
+  </div>
+</div>
+
+<div id="toast-container" aria-live="polite"></div>
+
+
+<!-- Firebase (free tier) — provides shared live data across everyone viewing this site.
+     See firebase-config.js and README.md for setup. If firebase-config.js is left with
+     placeholder values, the app falls back to this browser's local storage only. -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
