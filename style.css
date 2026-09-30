@@ -256,6 +256,12 @@
   .downtime-quicklog select:disabled { opacity: 0.6; }
   .downtime-quicklog #dt-ql-start-btn { padding: 9px 20px; }
   .downtime-quicklog .ql-hint { flex-basis: 100%; font-size: 12px; color: var(--accent-red); }
+  .downtime-quicklog .ql-status { flex-basis: 100%; font-size: 12px; color: var(--text-secondary); }
+  .ql-logout-link { background: none; border: none; padding: 0; font: inherit; font-size: 12px; color: var(--accent-teal); text-decoration: underline; cursor: pointer; }
+  .ql-logout-link:hover { color: var(--text); }
+  .dt-history-entry { cursor: pointer; transition: border-color 0.12s ease; }
+  .dt-history-entry:hover { border-color: var(--border-strong); }
+  .dt-history-summary { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
 
   /* ===== DOWNTIME TOOLBAR ===== */
   .downtime-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 24px; background: var(--surface); border-bottom: 1px solid var(--border); }

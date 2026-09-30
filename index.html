@@ -109,9 +109,16 @@
   <div id="downtime-view" style="display:none;">
     <div class="downtime-quicklog" id="downtime-quicklog">
       <div class="ql-field">
+        <label for="dt-ql-site">Site</label>
+        <select id="dt-ql-site">
+          <option value="">Select site</option>
+          <option>Chennai</option><option>Hosur</option><option>Narsapura</option>
+        </select>
+      </div>
+      <div class="ql-field">
         <label for="dt-ql-line">Line</label>
-        <select id="dt-ql-line">
-          <option value="">Select line</option>
+        <select id="dt-ql-line" disabled>
+          <option value="">Select a site first</option>
           <option>FATP Main Line</option>
           <option>FATP RE</option>
           <option>MLB Main Line</option>
@@ -121,14 +128,15 @@
       <div class="ql-field">
         <label for="dt-ql-machine">Machine code</label>
         <select id="dt-ql-machine" disabled>
-          <option value="">Select a line first</option>
+          <option value="">Select a site first</option>
         </select>
       </div>
       <div class="ql-field">
         <label for="dt-ql-shift">Shift</label>
-        <select id="dt-ql-shift"><option value="A">A</option><option value="B">B</option><option value="C">C</option></select>
+        <select id="dt-ql-shift" disabled><option value="A">A</option><option value="B">B</option><option value="C">C</option></select>
       </div>
       <button class="btn btn-primary" id="dt-ql-start-btn" disabled>Log Downtime</button>
+      <div class="ql-status" id="dt-ql-site-status"></div>
       <div class="ql-hint" id="dt-ql-hint"></div>
     </div>
 
@@ -285,6 +293,12 @@
       </div>
 
       <div class="field-section">
+        <h3>Downtime Log history</h3>
+        <div class="repair-log-list" id="machine-downtime-history-list"></div>
+        <div class="field-hint">Logged from the Downtime Log tab — click an entry to open it there. This list is read-only here.</div>
+      </div>
+
+      <div class="field-section">
         <h3>Repair history</h3>
         <div class="repair-log-list" id="repair-log-list"></div>
         <div class="repair-add-form" id="repair-add-form">
@@ -389,7 +403,7 @@
 <div class="overlay" id="auth-overlay"></div>
 <div class="auth-modal" id="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
   <h2 id="auth-modal-title">Engineering access required</h2>
-  <p class="auth-modal-copy">Adding a new machine record is restricted to the Engineering team. Enter the Engineering passphrase to continue — everyone with edit access can still update existing records and log repairs without it.</p>
+  <p class="auth-modal-copy" id="auth-modal-copy">Adding a new machine record is restricted to the Engineering team. Enter the Engineering passphrase to continue — everyone with edit access can still update existing records and log repairs without it.</p>
   <div class="field"><label for="in-auth-passphrase">Passphrase</label><input id="in-auth-passphrase" type="password" autocomplete="off"></div>
   <div class="auth-modal-error" id="auth-modal-error" style="display:none;"></div>
   <div class="auth-modal-actions">

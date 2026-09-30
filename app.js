@@ -150,25 +150,25 @@
           return chain;
         }).catch(function () {});
       },
-      getAuthHash: function () {
+      getConfigHash: function (key) {
         if (backend === 'db') {
-          return db.collection('config').doc('addMachineAuth').get().then(function (snap) { return snap.exists ? (snap.data().hash || null) : null; });
+          return db.collection('config').doc(key).get().then(function (snap) { return snap.exists ? (snap.data().hash || null) : null; });
         }
-        try { return Promise.resolve(localStorage.getItem('mr_engg_hash_local')); } catch (e) { return Promise.resolve(null); }
+        try { return Promise.resolve(localStorage.getItem('mr_hash_' + key + '_local')); } catch (e) { return Promise.resolve(null); }
       },
-      setAuthHash: function (hash) {
-        if (backend === 'db') return db.collection('config').doc('addMachineAuth').set({ hash: hash, updatedAt: Date.now() });
-        try { localStorage.setItem('mr_engg_hash_local', hash); } catch (e) {}
+      setConfigHash: function (key, hash) {
+        if (backend === 'db') return db.collection('config').doc(key).set({ hash: hash, updatedAt: Date.now() });
+        try { localStorage.setItem('mr_hash_' + key + '_local', hash); } catch (e) {}
         return Promise.resolve();
       },
-      seedAuthIfEmpty: function (defaultHash) {
+      seedConfigHashIfEmpty: function (key, defaultHash) {
         if (backend === 'db') {
-          return db.collection('config').doc('addMachineAuth').get().then(function (snap) {
+          return db.collection('config').doc(key).get().then(function (snap) {
             if (snap.exists) return;
-            return db.collection('config').doc('addMachineAuth').set({ hash: defaultHash, updatedAt: Date.now() }).catch(function () {});
+            return db.collection('config').doc(key).set({ hash: defaultHash, updatedAt: Date.now() }).catch(function () {});
           }).catch(function () {});
         }
-        try { if (!localStorage.getItem('mr_engg_hash_local')) localStorage.setItem('mr_engg_hash_local', defaultHash); } catch (e) {}
+        try { if (!localStorage.getItem('mr_hash_' + key + '_local')) localStorage.setItem('mr_hash_' + key + '_local', defaultHash); } catch (e) {}
         return Promise.resolve();
       },
       seedIfEmpty: function (rows) {
@@ -254,11 +254,10 @@
   function applyPermissionUI() {
     document.getElementById('add-btn').disabled = !canEdit;
     document.getElementById('add-btn').title = canEdit ? '' : 'View-only access — ask the owner to grant edit access';
-    var qlLine = document.getElementById('dt-ql-line');
-    if (qlLine) {
-      qlLine.disabled = !canEdit;
-      document.getElementById('dt-ql-shift').disabled = !canEdit;
+    var qlSite = document.getElementById('dt-ql-site');
+    if (qlSite) {
       document.getElementById('dt-ql-start-btn').title = canEdit ? '' : 'View-only access — ask the owner to grant edit access';
+      updateQuickLogSiteStatus();
       populateQuickLogMachineOptions();
     }
   }
@@ -608,6 +607,40 @@
     }).join('');
   }
 
+  function renderMachineDowntimeHistory(machineCode) {
+    var container = document.getElementById('machine-downtime-history-list');
+    if (!container) return;
+    var entries = (typeof downtimeEntries !== 'undefined' ? downtimeEntries : [])
+      .filter(function (e) { return machineCode && e.machineCode === machineCode; })
+      .sort(function (a, b) {
+        var aOngoing = !a.endTime, bOngoing = !b.endTime;
+        if (aOngoing !== bOngoing) return aOngoing ? -1 : 1;
+        return (b.startTime || 0) - (a.startTime || 0);
+      });
+    if (entries.length === 0) { container.innerHTML = '<div class="repair-empty">No downtime logged for this machine yet.</div>'; return; }
+    var completed = entries.filter(function (e) { return e.endTime; });
+    var totalMinutes = completed.reduce(function (s, e) { return s + (Number(e.downtimeMinutes) || 0); }, 0);
+    var summary = entries.length + ' incident' + (entries.length > 1 ? 's' : '') + (totalMinutes > 0 ? ' · ' + fmtDuration(totalMinutes * 60000) + ' total' : '');
+    container.innerHTML = '<div class="dt-history-summary">' + summary + '</div>' + entries.map(function (e) {
+      var ongoing = !e.endTime;
+      var durationLabel = ongoing ? 'Ongoing — started ' + fmtClockFull(e.startTime) : fmtDuration((e.downtimeMinutes || 0) * 60000);
+      return '<div class="repair-entry dt-history-entry" data-dt-id="' + e.id + '">' +
+        '<div class="repair-entry-top"><span class="repair-entry-date">' + fmtDate(e.date) + ' · Shift ' + escapeHtml(e.shift || '—') + '</span>' +
+        '<span class="repair-entry-downtime">' + (ongoing ? '<span class="downtime-flag" style="margin:0 4px 0 0;">live</span>' : '') + durationLabel + '</span></div>' +
+        '<div>' + escapeHtml(e.issueDescription || 'No issue description logged.') + '</div>' +
+        (e.dri ? '<div class="cell-sub" style="margin-top:2px;">DRI: ' + escapeHtml(e.dri) + '</div>' : '') +
+        '</div>';
+    }).join('');
+  }
+  document.getElementById('machine-downtime-history-list').addEventListener('click', function (e) {
+    var item = e.target.closest('[data-dt-id]');
+    if (!item) return;
+    var id = item.getAttribute('data-dt-id');
+    closeDrawer();
+    switchView('downtime');
+    openDowntimeDrawer(id);
+  });
+
   function openDrawer(mode, id) {
     editingId = mode === 'edit' ? id : null;
     pendingDelete = false;
@@ -651,6 +684,7 @@
     draftRepairLog = record && Array.isArray(record.repairLog) ? record.repairLog.slice() : [];
     renderPhotoFrame();
     renderRepairLog();
+    renderMachineDowntimeHistory(record ? record.machineId : '');
     toggleFormDisabled(!canEdit);
 
     overlay.classList.add('open'); drawer.classList.add('open');
@@ -668,8 +702,14 @@
   function closeDrawer() { overlay.classList.remove('open'); drawer.classList.remove('open'); editingId = null; }
   document.getElementById('add-btn').addEventListener('click', function () {
     if (!canEdit) return;
-    if (isEnggUnlocked()) { openDrawer('add'); return; }
-    openAuthModal();
+    if (isUnlocked('addMachineAuth')) { openDrawer('add'); return; }
+    openAuthModal({
+      key: 'addMachineAuth',
+      title: 'Engineering access required',
+      copy: 'Adding a new machine record is restricted to the Engineering team. Enter the Engineering passphrase to continue — everyone with edit access can still update existing records and log repairs without it.',
+      wrongMsg: 'Add Machine is restricted to Engineering — contact your Engineering lead.',
+      onSuccess: function () { openDrawer('add'); }
+    });
   });
   document.getElementById('drawer-close').addEventListener('click', closeDrawer);
   document.getElementById('cancel-btn').addEventListener('click', closeDrawer);
@@ -680,7 +720,7 @@
       if (drawer.classList.contains('open')) closeDrawer();
       var dtDrawerEl = document.getElementById('downtime-drawer');
       if (dtDrawerEl && dtDrawerEl.classList.contains('open')) closeDowntimeDrawer();
-      if (document.getElementById('auth-modal').classList.contains('open')) closeAuthModal();
+      if (document.getElementById('auth-modal').classList.contains('open')) closeAuthModal(true);
     }
   });
   document.getElementById('in-majorLine').addEventListener('change', function () {
@@ -746,10 +786,10 @@
      check running in a page the browser can inspect, a technically determined person
      with edit access could still work around it; it is a deliberate, honest speed bump
      for the normal app flow, not a cryptographic guarantee. */
-  /* ============ AUTH GATE (Add Machine — Engineering only) ============ */
-  var ENGG_UNLOCKED_KEY = 'mr_engg_unlocked';
-  function isEnggUnlocked() { try { return sessionStorage.getItem(ENGG_UNLOCKED_KEY) === '1'; } catch (e) { return false; } }
-  function setEnggUnlocked() { try { sessionStorage.setItem(ENGG_UNLOCKED_KEY, '1'); } catch (e) {} }
+  /* ============ PASSPHRASE GATE (generic — Add Machine, per-site downtime logging) ============ */
+  function isUnlocked(key) { try { return sessionStorage.getItem('mr_unlocked_' + key) === '1'; } catch (e) { return false; } }
+  function setUnlocked(key) { try { sessionStorage.setItem('mr_unlocked_' + key, '1'); } catch (e) {} }
+  function clearUnlocked(key) { try { sessionStorage.removeItem('mr_unlocked_' + key); } catch (e) {} }
 
   function sha256Hex(str) {
     if (!window.crypto || !window.crypto.subtle) return Promise.resolve(null);
@@ -760,7 +800,11 @@
   }
 
   var authOverlay = document.getElementById('auth-overlay'), authModal = document.getElementById('auth-modal');
-  function openAuthModal() {
+  var authContext = null; /* { key, title, copy, wrongMsg, onSuccess, onCancel } */
+  function openAuthModal(context) {
+    authContext = context;
+    document.getElementById('auth-modal-title').textContent = context.title;
+    document.getElementById('auth-modal-copy').textContent = context.copy;
     document.getElementById('in-auth-passphrase').value = '';
     document.getElementById('auth-modal-error').style.display = 'none';
     document.getElementById('auth-change-form').style.display = 'none';
@@ -769,31 +813,37 @@
     authOverlay.classList.add('open'); authModal.classList.add('open');
     document.getElementById('in-auth-passphrase').focus();
   }
-  function closeAuthModal() { authOverlay.classList.remove('open'); authModal.classList.remove('open'); }
+  function closeAuthModal(cancelled) {
+    authOverlay.classList.remove('open'); authModal.classList.remove('open');
+    var ctx = authContext; authContext = null;
+    if (cancelled && ctx && ctx.onCancel) ctx.onCancel();
+  }
   function showAuthError(msg) {
     var el = document.getElementById('auth-modal-error');
     el.textContent = msg; el.style.display = 'block';
   }
-  document.getElementById('auth-cancel-btn').addEventListener('click', closeAuthModal);
-  authOverlay.addEventListener('click', closeAuthModal);
+  document.getElementById('auth-cancel-btn').addEventListener('click', function () { closeAuthModal(true); });
+  authOverlay.addEventListener('click', function () { closeAuthModal(true); });
   document.getElementById('in-auth-passphrase').addEventListener('keydown', function (e) {
     if (e.key === 'Enter') document.getElementById('auth-unlock-btn').click();
   });
   document.getElementById('auth-unlock-btn').addEventListener('click', function () {
+    if (!authContext) return;
+    var ctx = authContext;
     var entered = document.getElementById('in-auth-passphrase').value;
-    if (!entered) { showAuthError('Enter the Engineering passphrase.'); return; }
-    Store.getAuthHash().then(function (storedHash) {
+    if (!entered) { showAuthError('Enter the passphrase.'); return; }
+    Store.getConfigHash(ctx.key).then(function (storedHash) {
       if (!storedHash) {
-        showAuthError("Engineering access isn't set up yet on this repository. Ask the owner to open the site once to finish setup.");
+        showAuthError("Access isn't set up yet for this on this repository. Ask the owner to open the site once to finish setup.");
         return null;
       }
       return sha256Hex(entered).then(function (enteredHash) {
         if (enteredHash && enteredHash === storedHash) {
-          setEnggUnlocked();
-          closeAuthModal();
-          openDrawer('add');
+          setUnlocked(ctx.key);
+          closeAuthModal(false);
+          if (ctx.onSuccess) ctx.onSuccess();
         } else {
-          showAuthError('Incorrect passphrase. Add Machine is restricted to Engineering — contact your Engineering lead.');
+          showAuthError('Incorrect passphrase.' + (ctx.wrongMsg ? ' ' + ctx.wrongMsg : ''));
         }
       });
     }).catch(function () { showAuthError('Could not verify access right now. Please try again.'); });
@@ -803,15 +853,17 @@
     form.style.display = form.style.display === 'none' ? 'block' : 'none';
   });
   document.getElementById('auth-change-save-btn').addEventListener('click', function () {
+    if (!authContext) return;
+    var ctx = authContext;
     var p1 = document.getElementById('in-auth-new1').value;
     var p2 = document.getElementById('in-auth-new2').value;
     if (!p1 || p1.length < 6) { showAuthError('New passphrase should be at least 6 characters.'); return; }
     if (p1 !== p2) { showAuthError("New passphrases don't match."); return; }
-    sha256Hex(p1).then(function (hash) { return Store.setAuthHash(hash); }).then(function () {
+    sha256Hex(p1).then(function (hash) { return Store.setConfigHash(ctx.key, hash); }).then(function () {
       document.getElementById('in-auth-new1').value = '';
       document.getElementById('in-auth-new2').value = '';
       document.getElementById('auth-change-form').style.display = 'none';
-      showToast('Engineering passphrase updated.', 'success');
+      showToast('Passphrase updated.', 'success');
     }).catch(function () {
       showAuthError('Only the repository owner can change this passphrase.');
     });
@@ -960,7 +1012,14 @@
   var dtEditingId = null, dtPendingDelete = false;
   var dtTickerInterval = null;
   var downtimeDrawer = document.getElementById('downtime-drawer');
-  DowntimeStore.onChange(function (data) { downtimeEntries = data; renderDowntimeAll(); });
+  DowntimeStore.onChange(function (data) {
+    downtimeEntries = data;
+    renderDowntimeAll();
+    if (drawer.classList.contains('open') && editingId) {
+      var openRecord = machines.find(function (m) { return m.id === editingId; });
+      if (openRecord) renderMachineDowntimeHistory(openRecord.machineId);
+    }
+  });
 
   /* ---- helpers ---- */
   function fmtDuration(ms) {
@@ -1036,13 +1095,75 @@
     }
   }
 
-  /* ---- quick log bar ---- */
+  /* ---- quick log bar (site-gated) ---- */
+  var DEFAULT_SITE_PASSPHRASES = { Chennai: 'Chennai@2026', Hosur: 'Hosur@2026', Narsapura: 'Narsapura@2026' };
+  function siteAuthKey(site) { return 'siteAuth_' + site; }
+
+  function updateQuickLogSiteStatus() {
+    var siteSel = document.getElementById('dt-ql-site');
+    var statusEl = document.getElementById('dt-ql-site-status');
+    if (!siteSel || !statusEl) return;
+    var site = siteSel.value;
+    var unlocked = site && isUnlocked(siteAuthKey(site));
+    if (!unlocked) { statusEl.innerHTML = ''; return; }
+    statusEl.innerHTML = 'Logged in for <strong>' + escapeHtml(site) + '</strong> downtime logging · <button type="button" class="ql-logout-link" id="dt-ql-logout-btn">Log out</button>';
+    document.getElementById('dt-ql-logout-btn').addEventListener('click', function () {
+      clearUnlocked(siteAuthKey(site));
+      siteSel.value = '';
+      updateQuickLogSiteStatus();
+      populateQuickLogMachineOptions();
+      showToast('Logged out of ' + site + ' downtime logging.', 'success');
+    });
+  }
+
+  function promptSiteUnlock(site, selectEl) {
+    openAuthModal({
+      key: siteAuthKey(site),
+      title: site + ' access required',
+      copy: "Logging downtime for " + site + " is restricted to that site's team. Enter the " + site + " passphrase to continue — anyone can still browse the downtime log for any site without it.",
+      wrongMsg: 'Ask your site lead for the ' + site + ' downtime passphrase.',
+      onSuccess: function () {
+        updateQuickLogSiteStatus();
+        populateQuickLogMachineOptions();
+        showToast('Logged in for ' + site + ' downtime logging.', 'success');
+      },
+      onCancel: function () {
+        selectEl.value = '';
+        updateQuickLogSiteStatus();
+        populateQuickLogMachineOptions();
+      }
+    });
+  }
+
+  document.getElementById('dt-ql-site').addEventListener('change', function () {
+    var selectEl = this;
+    var site = selectEl.value;
+    document.getElementById('dt-ql-line').value = '';
+    document.getElementById('dt-ql-machine').value = '';
+    if (!site) { updateQuickLogSiteStatus(); populateQuickLogMachineOptions(); return; }
+    if (isUnlocked(siteAuthKey(site))) { updateQuickLogSiteStatus(); populateQuickLogMachineOptions(); return; }
+    promptSiteUnlock(site, selectEl);
+  });
+
   function populateQuickLogMachineOptions() {
+    var siteSel = document.getElementById('dt-ql-site');
     var lineSel = document.getElementById('dt-ql-line');
+    var shiftSel = document.getElementById('dt-ql-shift');
     var machineSel = document.getElementById('dt-ql-machine');
     var startBtn = document.getElementById('dt-ql-start-btn');
     var hint = document.getElementById('dt-ql-hint');
-    if (!lineSel) return;
+    if (!siteSel) return;
+    var site = siteSel.value;
+    var unlocked = site && isUnlocked(siteAuthKey(site));
+    lineSel.disabled = !unlocked || !canEdit;
+    shiftSel.disabled = !unlocked || !canEdit;
+    if (!unlocked) {
+      machineSel.innerHTML = '<option value="">' + (site ? 'Enter the site password to continue' : 'Select a site first') + '</option>';
+      machineSel.disabled = true;
+      startBtn.disabled = true;
+      hint.textContent = '';
+      return;
+    }
     var line = lineSel.value;
     var currentMachineVal = machineSel.value;
     if (!line) {
@@ -1052,7 +1173,7 @@
       hint.textContent = '';
       return;
     }
-    var candidates = siteScopedMachines().filter(function (m) { return m.majorLine === line; });
+    var candidates = machines.filter(function (m) { return m.site === site && m.majorLine === line; });
     var available = candidates.filter(function (m) { return !isMachineOngoing(m.machineId); });
     var downCount = candidates.length - available.length;
     if (available.length === 0) {
@@ -1085,9 +1206,11 @@
   }
   document.getElementById('dt-ql-start-btn').addEventListener('click', function () {
     if (!canEdit) { showToast('View-only access — ask the owner to grant edit access to log downtime.', 'error'); return; }
+    var site = document.getElementById('dt-ql-site').value;
     var line = document.getElementById('dt-ql-line').value;
     var machineInternalId = document.getElementById('dt-ql-machine').value;
     var shift = document.getElementById('dt-ql-shift').value || currentShiftGuess();
+    if (!site || !isUnlocked(siteAuthKey(site))) { showToast('Select your site and enter its passphrase first.', 'error'); populateQuickLogMachineOptions(); return; }
     if (!line || !machineInternalId) { showToast('Pick a line and a machine.', 'error'); return; }
     var m = machines.find(function (x) { return x.id === machineInternalId; });
     if (!m) { showToast('That machine could not be found — refresh and try again.', 'error'); populateQuickLogMachineOptions(); return; }
@@ -1100,7 +1223,7 @@
     var payload = {
       machineCode: m.machineId,
       machineName: m.name,
-      site: m.site || (filters.site || ''),
+      site: m.site || site,
       date: new Date().toISOString().slice(0, 10),
       shift: shift,
       line: m.majorLine || line,
@@ -1442,6 +1565,14 @@
       .then(function () { return Store.cleanupLegacy(); })
       .then(function () { return Store.seedIfEmpty(SEED); })
       .then(function () { return sha256Hex(DEFAULT_ENGG_PASSPHRASE); })
-      .then(function (hash) { if (hash) return Store.seedAuthIfEmpty(hash); });
+      .then(function (hash) { if (hash) return Store.seedConfigHashIfEmpty('addMachineAuth', hash); })
+      .then(function () {
+        var chain = Promise.resolve();
+        SITES.forEach(function (site) {
+          chain = chain.then(function () { return sha256Hex(DEFAULT_SITE_PASSPHRASES[site]); })
+            .then(function (hash) { if (hash) return Store.seedConfigHashIfEmpty(siteAuthKey(site), hash); });
+        });
+        return chain;
+      });
   });
 })();
