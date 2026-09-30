@@ -254,6 +254,13 @@
   function applyPermissionUI() {
     document.getElementById('add-btn').disabled = !canEdit;
     document.getElementById('add-btn').title = canEdit ? '' : 'View-only access — ask the owner to grant edit access';
+    var qlLine = document.getElementById('dt-ql-line');
+    if (qlLine) {
+      qlLine.disabled = !canEdit;
+      document.getElementById('dt-ql-shift').disabled = !canEdit;
+      document.getElementById('dt-ql-start-btn').title = canEdit ? '' : 'View-only access — ask the owner to grant edit access';
+      populateQuickLogMachineOptions();
+    }
   }
 
   /* ============ FILTER OPTIONS ============ */
@@ -309,6 +316,7 @@
         filters.site = btn.getAttribute('data-site');
         filters.majorLine = ''; filters.subLine = ''; filters.quickFilter = '';
         syncFilterInputs(); renderAll();
+        resetDtQuickLog();
       });
     });
   }
@@ -572,6 +580,7 @@
     renderLinesOverview();
     renderStats();
     renderTable();
+    renderDowntimeAll();
   }
   Store.onChange(function (data) { machines = data; renderAll(); });
 
@@ -665,9 +674,12 @@
   document.getElementById('drawer-close').addEventListener('click', closeDrawer);
   document.getElementById('cancel-btn').addEventListener('click', closeDrawer);
   overlay.addEventListener('click', closeDrawer);
+  overlay.addEventListener('click', function () { if (typeof closeDowntimeDrawer === 'function') closeDowntimeDrawer(); });
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') {
       if (drawer.classList.contains('open')) closeDrawer();
+      var dtDrawerEl = document.getElementById('downtime-drawer');
+      if (dtDrawerEl && dtDrawerEl.classList.contains('open')) closeDowntimeDrawer();
       if (document.getElementById('auth-modal').classList.contains('open')) closeAuthModal();
     }
   });
@@ -883,12 +895,551 @@
     } catch (e) { showToast("Couldn't export CSV in this view.", 'error'); }
   }
 
+  /* ============ DOWNTIME LOG ============ */
+
+  var SHIFTS = ['A', 'B', 'C'];
+  function currentShiftGuess() {
+    var h = new Date().getHours();
+    if (h >= 6 && h < 14) return 'A';
+    if (h >= 14 && h < 22) return 'B';
+    return 'C';
+  }
+
+  /* ---- data store (mirrors Store above; separate collection / localStorage key) ---- */
+  var DowntimeStore = (function () {
+    var backend = null, db = null, cache = [], listeners = [];
+    function notify() { listeners.forEach(function (fn) { fn(cache); }); }
+    function localLoad() { try { var raw = localStorage.getItem('mr_downtime_demo_v1'); cache = raw ? JSON.parse(raw) : []; } catch (e) { cache = []; } }
+    function localSave() { try { localStorage.setItem('mr_downtime_demo_v1', JSON.stringify(cache)); } catch (e) {} }
+    return {
+      init: function () {
+        var hasFirebase = typeof FIREBASE_CONFIG !== 'undefined'
+          && FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.apiKey.indexOf('REPLACE_WITH') !== 0
+          && typeof firebase !== 'undefined';
+        if (hasFirebase) {
+          try {
+            var app = firebase.apps && firebase.apps.length ? firebase.apps[0] : firebase.initializeApp(FIREBASE_CONFIG);
+            db = firebase.firestore(app);
+          } catch (e) { console.error('Firebase init failed, falling back to local storage', e); db = null; }
+        }
+        if (db) {
+          backend = 'db';
+          db.collection('downtimeLogs').onSnapshot(
+            function (snap) { cache = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }); notify(); },
+            function (err) { console.error('downtime db subscription error', err); showToast('Downtime sync hit a snag — showing the last data received.', 'error'); }
+          );
+        } else { backend = 'local'; localLoad(); notify(); }
+        return Promise.resolve(backend);
+      },
+      getBackend: function () { return backend; },
+      onChange: function (fn) { listeners.push(fn); },
+      add: function (data) {
+        if (backend === 'db') return db.collection('downtimeLogs').add(data);
+        var id = 'dt_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+        cache.push(Object.assign({ id: id }, data)); localSave(); notify();
+        return Promise.resolve({ id: id });
+      },
+      update: function (id, data) {
+        if (backend === 'db') return db.collection('downtimeLogs').doc(id).update(data);
+        var idx = cache.findIndex(function (e) { return e.id === id; });
+        if (idx >= 0) { cache[idx] = Object.assign({}, cache[idx], data); localSave(); notify(); }
+        return Promise.resolve();
+      },
+      remove: function (id) {
+        if (backend === 'db') return db.collection('downtimeLogs').doc(id).delete();
+        cache = cache.filter(function (e) { return e.id !== id; }); localSave(); notify();
+        return Promise.resolve();
+      }
+    };
+  })();
+
+  /* ---- state ---- */
+  var downtimeEntries = [];
+  var activeView = 'machines';
+  var dtFilters = { q: '' };
+  var dtEditingId = null, dtPendingDelete = false;
+  var dtTickerInterval = null;
+  var downtimeDrawer = document.getElementById('downtime-drawer');
+  DowntimeStore.onChange(function (data) { downtimeEntries = data; renderDowntimeAll(); });
+
+  /* ---- helpers ---- */
+  function fmtDuration(ms) {
+    if (ms == null || isNaN(ms)) return '—';
+    if (ms < 0) ms = 0;
+    var totalMin = Math.floor(ms / 60000);
+    if (totalMin < 1) return '<1m';
+    var h = Math.floor(totalMin / 60), m = totalMin % 60;
+    return h > 0 ? (h + 'h ' + m + 'm') : (m + 'm');
+  }
+  function fmtTime(ts) {
+    if (!ts) return '—';
+    return new Date(ts).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+  }
+  function fmtClockFull(ts) {
+    if (!ts) return '—';
+    return new Date(ts).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true });
+  }
+  function toLocalInputValue(ts) {
+    if (!ts) return '';
+    var d = new Date(ts), pad = function (n) { return String(n).padStart(2, '0'); };
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+  function fromLocalInputValue(v) {
+    if (!v) return null;
+    var d = new Date(v);
+    return isNaN(d.getTime()) ? null : d.getTime();
+  }
+  function downtimeSiteScoped() {
+    if (!filters.site) return downtimeEntries;
+    return downtimeEntries.filter(function (e) { return e.site === filters.site; });
+  }
+  function isMachineOngoing(machineCode) {
+    return downtimeEntries.some(function (e) { return !e.endTime && e.machineCode === machineCode; });
+  }
+
+  /* ---- view switching ---- */
+  function switchView(view) {
+    activeView = view;
+    document.getElementById('view-tab-machines').classList.toggle('active', view === 'machines');
+    document.getElementById('view-tab-downtime').classList.toggle('active', view === 'downtime');
+    document.getElementById('machines-view').style.display = view === 'machines' ? '' : 'none';
+    document.getElementById('downtime-view').style.display = view === 'downtime' ? '' : 'none';
+    document.getElementById('machines-banner').style.display = view === 'machines' ? '' : 'none';
+    document.getElementById('downtime-banner').style.display = view === 'downtime' ? '' : 'none';
+    if (view === 'downtime') { renderDowntimeAll(); startDowntimeTicker(); }
+    else { stopDowntimeTicker(); }
+  }
+  document.getElementById('view-tab-machines').addEventListener('click', function () { switchView('machines'); });
+  document.getElementById('view-tab-downtime').addEventListener('click', function () { switchView('downtime'); });
+
+  /* ---- live ticker for ongoing entries ---- */
+  function startDowntimeTicker() {
+    stopDowntimeTicker();
+    dtTickerInterval = setInterval(updateLiveElapsedDisplays, 1000);
+    updateLiveElapsedDisplays();
+  }
+  function stopDowntimeTicker() { if (dtTickerInterval) { clearInterval(dtTickerInterval); dtTickerInterval = null; } }
+  function updateLiveElapsedDisplays() {
+    var now = Date.now();
+    downtimeEntries.forEach(function (e) {
+      if (e.endTime) return;
+      var elapsed = fmtDuration(now - e.startTime);
+      var bannerEl = document.getElementById('dt-ongoing-elapsed-' + e.id);
+      if (bannerEl) bannerEl.textContent = elapsed;
+      var rowEl = document.getElementById('dt-row-elapsed-' + e.id);
+      if (rowEl) rowEl.textContent = elapsed;
+    });
+    var drawerEl = document.getElementById('dt-drawer-elapsed');
+    if (drawerEl && dtEditingId) {
+      var entry = downtimeEntries.find(function (e) { return e.id === dtEditingId; });
+      if (entry && !entry.endTime) drawerEl.textContent = fmtDuration(now - entry.startTime);
+    }
+  }
+
+  /* ---- quick log bar ---- */
+  function populateQuickLogMachineOptions() {
+    var lineSel = document.getElementById('dt-ql-line');
+    var machineSel = document.getElementById('dt-ql-machine');
+    var startBtn = document.getElementById('dt-ql-start-btn');
+    var hint = document.getElementById('dt-ql-hint');
+    if (!lineSel) return;
+    var line = lineSel.value;
+    var currentMachineVal = machineSel.value;
+    if (!line) {
+      machineSel.innerHTML = '<option value="">Select a line first</option>';
+      machineSel.disabled = true;
+      startBtn.disabled = true;
+      hint.textContent = '';
+      return;
+    }
+    var candidates = siteScopedMachines().filter(function (m) { return m.majorLine === line; });
+    var available = candidates.filter(function (m) { return !isMachineOngoing(m.machineId); });
+    var downCount = candidates.length - available.length;
+    if (available.length === 0) {
+      machineSel.innerHTML = '<option value="">' + (candidates.length === 0 ? 'No machines on this line' : 'All machines on this line are already down') + '</option>';
+      machineSel.disabled = true;
+      startBtn.disabled = true;
+    } else {
+      machineSel.innerHTML = '<option value="">Select machine</option>' + available.map(function (m) {
+        return '<option value="' + m.id + '">' + escapeHtml(m.machineId) + ' — ' + escapeHtml(m.name) + '</option>';
+      }).join('');
+      machineSel.disabled = !canEdit;
+      if (currentMachineVal && available.some(function (m) { return m.id === currentMachineVal; })) machineSel.value = currentMachineVal;
+      startBtn.disabled = !canEdit || !machineSel.value;
+    }
+    hint.textContent = downCount > 0
+      ? (downCount + ' machine' + (downCount > 1 ? 's' : '') + ' on this line already has ongoing downtime — see the list below.')
+      : '';
+  }
+  document.getElementById('dt-ql-line').addEventListener('change', function () {
+    document.getElementById('dt-ql-machine').value = '';
+    populateQuickLogMachineOptions();
+  });
+  document.getElementById('dt-ql-machine').addEventListener('change', function () {
+    document.getElementById('dt-ql-start-btn').disabled = !canEdit || !this.value;
+  });
+  function resetDtQuickLog() {
+    document.getElementById('dt-ql-line').value = '';
+    document.getElementById('dt-ql-shift').value = currentShiftGuess();
+    populateQuickLogMachineOptions();
+  }
+  document.getElementById('dt-ql-start-btn').addEventListener('click', function () {
+    if (!canEdit) { showToast('View-only access — ask the owner to grant edit access to log downtime.', 'error'); return; }
+    var line = document.getElementById('dt-ql-line').value;
+    var machineInternalId = document.getElementById('dt-ql-machine').value;
+    var shift = document.getElementById('dt-ql-shift').value || currentShiftGuess();
+    if (!line || !machineInternalId) { showToast('Pick a line and a machine.', 'error'); return; }
+    var m = machines.find(function (x) { return x.id === machineInternalId; });
+    if (!m) { showToast('That machine could not be found — refresh and try again.', 'error'); populateQuickLogMachineOptions(); return; }
+    if (isMachineOngoing(m.machineId)) {
+      showToast(m.machineId + ' already has an ongoing downtime entry — stop it before starting a new one.', 'error');
+      populateQuickLogMachineOptions();
+      return;
+    }
+    var now = Date.now();
+    var payload = {
+      machineCode: m.machineId,
+      machineName: m.name,
+      site: m.site || (filters.site || ''),
+      date: new Date().toISOString().slice(0, 10),
+      shift: shift,
+      line: m.majorLine || line,
+      topBot: '',
+      station: '',
+      lane: m.subLine || '',
+      startTime: now,
+      endTime: null,
+      downtimeMinutes: null,
+      issueDescription: '',
+      dri: m.driName || '',
+      remarks: '',
+      createdAt: now
+    };
+    document.getElementById('dt-ql-start-btn').disabled = true;
+    DowntimeStore.add(payload).then(function (res) {
+      showToast('Downtime started for ' + m.machineId + ' — timer is running.', 'success');
+      resetDtQuickLog();
+      openDowntimeDrawerWithEntry(Object.assign({ id: res.id }, payload));
+    }).catch(function (err) {
+      console.error(err);
+      showToast("Couldn't start downtime — you may have view-only access.", 'error');
+      populateQuickLogMachineOptions();
+    });
+  });
+
+  /* ---- rendering ---- */
+  function renderDowntimeAll() {
+    renderDowntimeOngoingBanner();
+    renderDowntimeStats();
+    renderDowntimeTable();
+    populateQuickLogMachineOptions();
+  }
+
+  function renderDowntimeStats() {
+    var scoped = downtimeSiteScoped();
+    var ongoing = scoped.filter(function (e) { return !e.endTime; });
+    var todayStr = new Date().toISOString().slice(0, 10);
+    var loggedToday = scoped.filter(function (e) { return e.date === todayStr; });
+    var completed = scoped.filter(function (e) { return e.endTime; });
+    var totalMinutes = completed.reduce(function (s, e) { return s + (Number(e.downtimeMinutes) || 0); }, 0);
+    var avgMinutes = completed.length ? Math.round(totalMinutes / completed.length) : 0;
+    var stats = [
+      { label: 'Currently down', value: String(ongoing.length), warn: ongoing.length > 0 },
+      { label: 'Logged today', value: String(loggedToday.length) },
+      { label: 'Total entries', value: String(scoped.length) },
+      { label: 'Total downtime', value: fmtDuration(totalMinutes * 60000) },
+      { label: 'Avg per incident', value: completed.length ? fmtDuration(avgMinutes * 60000) : '—' }
+    ];
+    var strip = document.getElementById('downtime-stat-strip');
+    if (!strip) return;
+    strip.innerHTML = stats.map(function (s) {
+      return '<div class="stat"><div class="stat-label">' + s.label + '</div><div class="stat-value' + (s.warn ? ' warn' : '') + '">' + s.value + '</div></div>';
+    }).join('');
+  }
+
+  function renderDowntimeOngoingBanner() {
+    var container = document.getElementById('downtime-ongoing-banner');
+    if (!container) return;
+    var ongoing = downtimeSiteScoped().filter(function (e) { return !e.endTime; }).sort(function (a, b) { return (a.startTime || 0) - (b.startTime || 0); });
+    if (ongoing.length === 0) { container.innerHTML = ''; return; }
+    var html = '<div class="dt-ongoing-banner"><div class="dt-ongoing-title"><span class="dt-ongoing-dot"></span>' +
+      ongoing.length + ' machine' + (ongoing.length > 1 ? 's' : '') + ' currently down</div><div class="dt-ongoing-list">';
+    ongoing.forEach(function (e) {
+      html += '<div class="dt-ongoing-item" data-id="' + e.id + '">' +
+        '<div class="dt-ongoing-item-main"><strong>' + escapeHtml(e.machineName || e.machineCode || '') + '</strong> <span class="cell-id">(' + escapeHtml(e.machineCode || '') + ')</span>' +
+        (e.line ? ' · ' + escapeHtml(e.line) : '') + ' · started ' + fmtTime(e.startTime) + '</div>' +
+        '<div class="dt-elapsed" id="dt-ongoing-elapsed-' + e.id + '">' + fmtDuration(Date.now() - e.startTime) + '</div>' +
+        '<button type="button" class="btn btn-sm btn-danger" data-stop-id="' + e.id + '"' + (canEdit ? '' : ' disabled') + '>Stop</button>' +
+        '</div>';
+    });
+    html += '</div></div>';
+    container.innerHTML = html;
+  }
+  document.getElementById('downtime-ongoing-banner').addEventListener('click', function (e) {
+    var stopBtn = e.target.closest('[data-stop-id]');
+    if (stopBtn) { e.stopPropagation(); if (canEdit) quickStopDowntime(stopBtn.getAttribute('data-stop-id')); return; }
+    var item = e.target.closest('.dt-ongoing-item');
+    if (item) openDowntimeDrawer(item.getAttribute('data-id'));
+  });
+
+  var DT_COLS = ['Machine', 'Date', 'Shift', 'Line', 'TOP/BOT', 'Station', 'Lane', 'Start Time', 'End Time', 'Downtime', 'Issue Description', 'DRI', 'Remarks'];
+  function applyDowntimeFilters() {
+    var q = dtFilters.q.trim().toLowerCase();
+    return downtimeSiteScoped().filter(function (e) {
+      if (q) {
+        var hay = [e.machineCode, e.machineName, e.issueDescription, e.dri, e.remarks, e.station, e.lane, e.line].join(' ').toLowerCase();
+        if (hay.indexOf(q) === -1) return false;
+      }
+      return true;
+    }).sort(function (a, b) {
+      var aOngoing = !a.endTime, bOngoing = !b.endTime;
+      if (aOngoing !== bOngoing) return aOngoing ? -1 : 1;
+      return (b.startTime || 0) - (a.startTime || 0);
+    });
+  }
+
+  function renderDowntimeTable() {
+    var headRow = document.getElementById('downtime-table-head-row');
+    if (!headRow) return;
+    headRow.innerHTML = DT_COLS.map(function (c) { return '<th>' + c + '</th>'; }).join('');
+    var rows = applyDowntimeFilters();
+    var body = document.getElementById('downtime-table-body');
+    var empty = document.getElementById('downtime-empty-state');
+    if (rows.length === 0) {
+      body.innerHTML = '';
+      empty.style.display = 'block';
+      document.getElementById('downtime-table').style.display = downtimeEntries.length === 0 ? 'none' : 'table';
+      empty.querySelector('h3').textContent = downtimeEntries.length === 0 ? 'No downtime logged yet' : 'No entries match here';
+      empty.querySelector('p').textContent = downtimeEntries.length === 0
+        ? 'Pick a line and machine above and click "Log Downtime" the moment a machine goes down — it records the start time for you.'
+        : 'Try clearing your search.';
+      return;
+    }
+    empty.style.display = 'none';
+    document.getElementById('downtime-table').style.display = 'table';
+    body.innerHTML = rows.map(function (e) {
+      var ongoing = !e.endTime;
+      var downtimeCell = ongoing
+        ? '<span id="dt-row-elapsed-' + e.id + '" class="dt-elapsed">' + fmtDuration(Date.now() - e.startTime) + '</span> <span class="downtime-flag" style="margin-left:4px;">live</span>'
+        : fmtDuration((e.downtimeMinutes || 0) * 60000);
+      var endCell = ongoing
+        ? '<button type="button" class="btn btn-sm btn-danger" data-stop-id="' + e.id + '"' + (canEdit ? '' : ' disabled') + '>Stop</button>'
+        : fmtTime(e.endTime);
+      return '<tr class="' + (ongoing ? 'dt-row-ongoing' : '') + '" data-id="' + e.id + '">' +
+        '<td><div class="cell-name">' + escapeHtml(e.machineName || '—') + '</div><div class="cell-sub cell-id">' + escapeHtml(e.machineCode || '') + '</div></td>' +
+        '<td>' + fmtDate(e.date) + '</td>' +
+        '<td>' + escapeHtml(e.shift || '—') + '</td>' +
+        '<td>' + escapeHtml(e.line || '—') + '</td>' +
+        '<td>' + escapeHtml(e.topBot || '—') + '</td>' +
+        '<td>' + escapeHtml(e.station || '—') + '</td>' +
+        '<td>' + escapeHtml(e.lane || '—') + '</td>' +
+        '<td class="cell-money">' + fmtTime(e.startTime) + '</td>' +
+        '<td class="cell-money">' + endCell + '</td>' +
+        '<td class="cell-money">' + downtimeCell + '</td>' +
+        '<td class="cell-purpose" title="' + escapeHtml(e.issueDescription || '') + '">' + escapeHtml(e.issueDescription || '—') + '</td>' +
+        '<td>' + escapeHtml(e.dri || '—') + '</td>' +
+        '<td class="cell-purpose" title="' + escapeHtml(e.remarks || '') + '">' + escapeHtml(e.remarks || '—') + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+  document.getElementById('downtime-table-body').addEventListener('click', function (e) {
+    var stopBtn = e.target.closest('[data-stop-id]');
+    if (stopBtn) { e.stopPropagation(); if (canEdit) quickStopDowntime(stopBtn.getAttribute('data-stop-id')); return; }
+    var tr = e.target.closest('tr[data-id]');
+    if (tr) openDowntimeDrawer(tr.getAttribute('data-id'));
+  });
+
+  /* ---- filter toolbar wiring ---- */
+  document.getElementById('dt-search-input').addEventListener('input', function (e) { dtFilters.q = e.target.value; renderDowntimeTable(); });
+  document.getElementById('dt-reset-filters').addEventListener('click', function () {
+    dtFilters = { q: '' };
+    document.getElementById('dt-search-input').value = '';
+    renderDowntimeTable();
+  });
+
+  /* ---- quick stop (from banner or table, no drawer) ---- */
+  function quickStopDowntime(id) {
+    var entry = downtimeEntries.find(function (e) { return e.id === id; });
+    if (!entry || entry.endTime) return;
+    var endNow = Date.now();
+    var minutes = Math.max(0, Math.round((endNow - entry.startTime) / 60000));
+    DowntimeStore.update(id, { endTime: endNow, downtimeMinutes: minutes }).then(function () {
+      showToast('Downtime stopped — ' + fmtDuration(minutes * 60000) + ' recorded.', 'success');
+    }).catch(function (err) {
+      console.error(err);
+      showToast("Couldn't stop downtime — you may have view-only access.", 'error');
+    });
+  }
+
+  /* ---- drawer ----
+     Machine, Line, Lane and Shift are fixed the moment a downtime entry is created via
+     the quick-log bar above, so the drawer only ever fills in the remaining details
+     (and, for a completed entry, allows a start/end time correction). There is no
+     "new entry" mode here any more — that flow lives entirely in the quick-log bar. */
+  function dtSetField(name, value) { var el = document.getElementById('dt-in-' + name); if (el) el.value = value === undefined || value === null ? '' : value; }
+  function dtGetField(name) { var el = document.getElementById('dt-in-' + name); return el ? el.value : ''; }
+
+  function updateComputedDowntimeDisplay() {
+    var startVal = fromLocalInputValue(document.getElementById('dt-in-startTime').value);
+    var endVal = fromLocalInputValue(document.getElementById('dt-in-endTime').value);
+    var el = document.getElementById('dt-computed-downtime');
+    if (startVal == null || endVal == null) { el.textContent = ''; return; }
+    if (endVal < startVal) { el.textContent = 'End time is before start time — check the values above.'; el.style.color = 'var(--accent-red)'; return; }
+    el.style.color = '';
+    el.textContent = 'Downtime: ' + fmtDuration(endVal - startVal);
+  }
+  document.getElementById('dt-in-startTime').addEventListener('input', updateComputedDowntimeDisplay);
+  document.getElementById('dt-in-endTime').addEventListener('input', updateComputedDowntimeDisplay);
+
+  function toggleDowntimeFormDisabled(disabled) {
+    document.querySelectorAll('#downtime-form input, #downtime-form select, #downtime-form textarea').forEach(function (el) { el.disabled = disabled; });
+    document.getElementById('dt-save-btn').style.display = disabled ? 'none' : 'inline-flex';
+    document.getElementById('dt-save-details-btn').style.display = disabled ? 'none' : 'inline-flex';
+  }
+  function resetDtDeleteButton() { var btn = document.getElementById('dt-delete-btn'); if (btn) btn.textContent = 'Delete entry'; }
+  function lockDowntimeIdentityFields() {
+    ['machine', 'date', 'shift', 'line', 'lane'].forEach(function (name) {
+      var el = document.getElementById('dt-in-' + name);
+      if (el) el.disabled = true;
+    });
+  }
+
+  /* Open by id — looks the entry up in the synced list (used for row/banner clicks). */
+  function openDowntimeDrawer(id) {
+    var entry = downtimeEntries.find(function (e) { return e.id === id; });
+    if (!entry) { showToast("Couldn't find that entry — it may have just changed.", 'error'); return; }
+    openDowntimeDrawerWithEntry(entry);
+  }
+
+  /* Open with an entry object directly — used right after the quick-log bar creates a
+     new entry, so the drawer doesn't have to wait for the synced list to catch up. */
+  function openDowntimeDrawerWithEntry(entry) {
+    dtPendingDelete = false;
+    resetDtDeleteButton();
+    toggleDowntimeFormDisabled(!canEdit);
+    dtEditingId = entry.id;
+    dtSetField('machine', (entry.machineCode || '') + (entry.machineName ? ' — ' + entry.machineName : ''));
+    dtSetField('date', entry.date || '');
+    dtSetField('shift', entry.shift || 'A');
+    dtSetField('line', entry.line || '');
+    dtSetField('topbot', entry.topBot || '');
+    dtSetField('station', entry.station || '');
+    dtSetField('lane', entry.lane || '');
+    dtSetField('issue', entry.issueDescription || '');
+    dtSetField('dri', entry.dri || '');
+    dtSetField('remarks', entry.remarks || '');
+    lockDowntimeIdentityFields();
+    document.getElementById('dt-danger-zone').style.display = canEdit ? 'block' : 'none';
+    var saveDetailsBtn = document.getElementById('dt-save-details-btn');
+    if (!entry.endTime) {
+      document.getElementById('downtime-drawer-title').textContent = 'Downtime in progress';
+      document.getElementById('dt-timing-editable').style.display = 'none';
+      document.getElementById('dt-timing-static').innerHTML = 'Started ' + fmtClockFull(entry.startTime) + ' · running <strong id="dt-drawer-elapsed">' + fmtDuration(Date.now() - entry.startTime) + '</strong>';
+      document.getElementById('dt-computed-downtime').textContent = '';
+      document.getElementById('dt-save-btn').textContent = 'Stop Downtime';
+      if (canEdit) saveDetailsBtn.style.display = 'inline-flex';
+    } else {
+      document.getElementById('downtime-drawer-title').textContent = 'Edit downtime entry';
+      document.getElementById('dt-timing-static').textContent = '';
+      document.getElementById('dt-timing-editable').style.display = '';
+      document.getElementById('dt-in-startTime').value = toLocalInputValue(entry.startTime);
+      document.getElementById('dt-in-endTime').value = toLocalInputValue(entry.endTime);
+      updateComputedDowntimeDisplay();
+      document.getElementById('dt-save-btn').textContent = 'Save changes';
+      saveDetailsBtn.style.display = 'none';
+    }
+    overlay.classList.add('open'); downtimeDrawer.classList.add('open');
+    document.getElementById('dt-in-issue').focus();
+  }
+  function closeDowntimeDrawer() { overlay.classList.remove('open'); downtimeDrawer.classList.remove('open'); dtEditingId = null; }
+
+  document.getElementById('dt-drawer-close').addEventListener('click', closeDowntimeDrawer);
+  document.getElementById('dt-cancel-btn').addEventListener('click', closeDowntimeDrawer);
+
+  function collectDowntimeDetailsPayload() {
+    return {
+      topBot: dtGetField('topbot'),
+      station: dtGetField('station').trim(),
+      issueDescription: dtGetField('issue').trim(),
+      dri: dtGetField('dri').trim(),
+      remarks: dtGetField('remarks').trim()
+    };
+  }
+
+  /* Save the fillable details without stopping the timer (ongoing entries only). */
+  document.getElementById('dt-save-details-btn').addEventListener('click', function () {
+    if (!canEdit || !dtEditingId) return;
+    DowntimeStore.update(dtEditingId, collectDowntimeDetailsPayload()).then(function () {
+      showToast('Details saved — timer keeps running.', 'success');
+      closeDowntimeDrawer();
+    }).catch(function (err) {
+      console.error(err);
+      showToast("Couldn't save — you may have view-only access.", 'error');
+    });
+  });
+
+  document.getElementById('dt-save-btn').addEventListener('click', function () {
+    if (!canEdit || !dtEditingId) return;
+    var entry = downtimeEntries.find(function (e) { return e.id === dtEditingId; });
+    if (!entry) { closeDowntimeDrawer(); return; }
+
+    if (!entry.endTime) {
+      var endNow = Date.now();
+      var minutes = Math.max(0, Math.round((endNow - entry.startTime) / 60000));
+      var payload = collectDowntimeDetailsPayload();
+      payload.endTime = endNow;
+      payload.downtimeMinutes = minutes;
+      DowntimeStore.update(dtEditingId, payload).then(function () {
+        showToast('Downtime stopped — ' + fmtDuration(minutes * 60000) + ' recorded.', 'success');
+        closeDowntimeDrawer();
+      }).catch(function (err) {
+        console.error(err);
+        showToast("Couldn't stop downtime — you may have view-only access.", 'error');
+      });
+      return;
+    }
+
+    var startVal = fromLocalInputValue(document.getElementById('dt-in-startTime').value);
+    var endVal = fromLocalInputValue(document.getElementById('dt-in-endTime').value);
+    if (startVal == null || endVal == null) { showToast('Start and end time are both required.', 'error'); return; }
+    if (endVal < startVal) { showToast('End time must be after start time.', 'error'); return; }
+    var minutes2 = Math.max(0, Math.round((endVal - startVal) / 60000));
+    var payload2 = collectDowntimeDetailsPayload();
+    payload2.startTime = startVal;
+    payload2.endTime = endVal;
+    payload2.downtimeMinutes = minutes2;
+    DowntimeStore.update(dtEditingId, payload2).then(function () {
+      showToast('Downtime entry updated.', 'success');
+      closeDowntimeDrawer();
+    }).catch(function (err) {
+      console.error(err);
+      showToast("Couldn't save — you may have view-only access.", 'error');
+    });
+  });
+
+  document.getElementById('dt-delete-btn').addEventListener('click', function () {
+    if (!dtEditingId) return;
+    if (!dtPendingDelete) {
+      dtPendingDelete = true; this.textContent = 'Click again to confirm';
+      setTimeout(function () { dtPendingDelete = false; resetDtDeleteButton(); }, 3000);
+      return;
+    }
+    DowntimeStore.remove(dtEditingId).then(function () {
+      showToast('Downtime entry removed.', 'success');
+      closeDowntimeDrawer();
+    }).catch(function (err) {
+      console.error(err);
+      showToast("Couldn't delete — you may have view-only access.", 'error');
+    });
+  });
+
   /* ============ INIT ============ */
   updateSubLineEnabled();
   Store.init().then(function (backend) {
     canEdit = true; /* Everyone with the link can edit in this standalone build — see README for adding real auth. */
     renderSyncBadge(); applyPermissionUI();
-    return Store.cleanupLegacy()
+    return DowntimeStore.init()
+      .then(function () { return Store.cleanupLegacy(); })
       .then(function () { return Store.seedIfEmpty(SEED); })
       .then(function () { return sha256Hex(DEFAULT_ENGG_PASSPHRASE); })
       .then(function (hash) { if (hash) return Store.seedAuthIfEmpty(hash); });

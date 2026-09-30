@@ -241,3 +241,39 @@
 
   .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
   @media (prefers-reduced-motion: reduce) { .drawer, .overlay, .toast { transition: none; animation: none; } }
+
+  /* ===== VIEW TABS ===== */
+  .view-tabs { display: flex; align-items: center; gap: 2px; padding: 0 24px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  .view-tab { padding: 10px 4px; margin-right: 22px; border: none; background: none; font-family: inherit; font-size: 13.5px; font-weight: 600; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; transition: color 0.12s ease, border-color 0.12s ease; }
+  .view-tab:hover { color: var(--text); }
+  .view-tab.active { color: var(--text); border-bottom-color: var(--accent-teal); }
+
+  /* ===== DOWNTIME QUICK LOG ===== */
+  .downtime-quicklog { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; padding: 16px 24px; background: var(--accent-teal-bg); border-bottom: 1px solid var(--border); }
+  .downtime-quicklog .ql-field { display: flex; flex-direction: column; gap: 4px; min-width: 190px; }
+  .downtime-quicklog .ql-field label { font-size: 11.5px; color: var(--text-secondary); font-weight: 600; }
+  .downtime-quicklog select { padding: 8px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface); color: var(--text); }
+  .downtime-quicklog select:disabled { opacity: 0.6; }
+  .downtime-quicklog #dt-ql-start-btn { padding: 9px 20px; }
+  .downtime-quicklog .ql-hint { flex-basis: 100%; font-size: 12px; color: var(--accent-red); }
+
+  /* ===== DOWNTIME TOOLBAR ===== */
+  .downtime-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 14px 24px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  .downtime-toolbar select { padding: 7px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-alt); color: var(--text); }
+
+  /* ===== DOWNTIME ONGOING BANNER ===== */
+  .dt-ongoing-banner { margin: 16px 24px 0; border: 1px solid var(--accent-red); border-left-width: 4px; background: var(--accent-red-bg); border-radius: 4px; padding: 12px 16px; }
+  .dt-ongoing-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; margin-bottom: 8px; }
+  .dt-ongoing-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent-red); flex-shrink: 0; animation: dt-pulse 1.4s ease-in-out infinite; }
+  @keyframes dt-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  .dt-ongoing-list { display: flex; flex-direction: column; gap: 6px; }
+  .dt-ongoing-item { display: flex; align-items: center; gap: 12px; padding: 8px 10px; background: var(--surface); border-radius: 4px; border: 1px solid var(--border); cursor: pointer; transition: border-color 0.12s ease; }
+  .dt-ongoing-item:hover { border-color: var(--border-strong); }
+  .dt-ongoing-item-main { flex: 1; font-size: 12.5px; min-width: 0; }
+  .dt-elapsed { font-family: var(--font-mono); font-size: 12.5px; font-weight: 600; color: var(--accent-red); white-space: nowrap; }
+
+  /* ===== DOWNTIME TABLE ===== */
+  tr.dt-row-ongoing { background: var(--accent-red-bg); }
+  tr.dt-row-ongoing:hover { filter: brightness(0.97); }
+
+  @media (prefers-reduced-motion: reduce) { .dt-ongoing-dot { animation: none; } }

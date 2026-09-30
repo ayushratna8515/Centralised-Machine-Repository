@@ -31,73 +31,131 @@
   </header>
 
   <div class="site-tabs" id="site-tabs"></div>
+  <div class="view-tabs" id="view-tabs">
+    <button class="view-tab active" id="view-tab-machines" data-view="machines">Machine Repository</button>
+    <button class="view-tab" id="view-tab-downtime" data-view="downtime">Downtime Log</button>
+  </div>
 
-  <div class="banner">Data syncs live across everyone with access to this link. Anyone with the link can edit or log repairs in this POC build. Adding a new machine additionally requires the Engineering passphrase.</div>
+  <div class="banner" id="machines-banner">Data syncs live across everyone with access to this link. Anyone with the link can edit or log repairs in this POC build. Adding a new machine additionally requires the Engineering passphrase.</div>
+  <div class="banner" id="downtime-banner" style="display:none;">Data syncs live across everyone with access to this link. Pick a line and machine above and click "Log Downtime" the instant a machine stops — the timer records the start for you.</div>
 
-  <div id="attention-panel"></div>
-  <div class="lines-overview" id="lines-overview"></div>
-  <div class="stat-strip" id="stat-strip"></div>
+  <div id="machines-view">
+    <div id="attention-panel"></div>
+    <div class="lines-overview" id="lines-overview"></div>
+    <div class="stat-strip" id="stat-strip"></div>
 
-  <main class="layout">
-    <aside class="filters" id="filters">
-      <div class="filter-group">
-        <label for="f-majorLine">Line</label>
-        <select id="f-majorLine">
-          <option value="">All lines</option>
+    <main class="layout">
+      <aside class="filters" id="filters">
+        <div class="filter-group">
+          <label for="f-majorLine">Line</label>
+          <select id="f-majorLine">
+            <option value="">All lines</option>
+            <option>FATP Main Line</option>
+            <option>FATP RE</option>
+            <option>MLB Main Line</option>
+            <option>MLB RE</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="f-subLine">Sub-line</label>
+          <select id="f-subLine">
+            <option value="">All sub-lines</option>
+            <option>L1</option><option>L2</option><option>L3</option><option>L4</option><option>L5</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="f-status">Status</label>
+          <select id="f-status">
+            <option value="">All statuses</option>
+            <option value="Operational">Operational</option>
+            <option value="Under Maintenance">Under maintenance</option>
+            <option value="Idle">Idle</option>
+            <option value="Decommissioned">Decommissioned</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="f-criticality">Criticality</label>
+          <select id="f-criticality">
+            <option value="">All levels</option>
+            <option value="High">High</option>
+            <option value="Medium">Medium</option>
+            <option value="Low">Low</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label for="f-vendor">Vendor</label>
+          <select id="f-vendor"><option value="">All vendors</option></select>
+        </div>
+        <button class="btn btn-ghost btn-sm filter-reset" id="reset-filters">Reset filters</button>
+      </aside>
+
+      <div class="content">
+        <div class="table-scroll" id="table-scroll">
+          <table class="machines" id="machines-table">
+            <thead>
+              <tr id="table-head-row"></tr>
+            </thead>
+            <tbody id="table-body"></tbody>
+          </table>
+          <div class="empty-state" id="empty-state" style="display:none;">
+            <h3>No machines match here</h3>
+            <p>Try resetting filters, or add the first machine to this repository.</p>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div id="downtime-view" style="display:none;">
+    <div class="downtime-quicklog" id="downtime-quicklog">
+      <div class="ql-field">
+        <label for="dt-ql-line">Line</label>
+        <select id="dt-ql-line">
+          <option value="">Select line</option>
           <option>FATP Main Line</option>
           <option>FATP RE</option>
           <option>MLB Main Line</option>
           <option>MLB RE</option>
         </select>
       </div>
-      <div class="filter-group">
-        <label for="f-subLine">Sub-line</label>
-        <select id="f-subLine">
-          <option value="">All sub-lines</option>
-          <option>L1</option><option>L2</option><option>L3</option><option>L4</option><option>L5</option>
+      <div class="ql-field">
+        <label for="dt-ql-machine">Machine code</label>
+        <select id="dt-ql-machine" disabled>
+          <option value="">Select a line first</option>
         </select>
       </div>
-      <div class="filter-group">
-        <label for="f-status">Status</label>
-        <select id="f-status">
-          <option value="">All statuses</option>
-          <option value="Operational">Operational</option>
-          <option value="Under Maintenance">Under maintenance</option>
-          <option value="Idle">Idle</option>
-          <option value="Decommissioned">Decommissioned</option>
-        </select>
+      <div class="ql-field">
+        <label for="dt-ql-shift">Shift</label>
+        <select id="dt-ql-shift"><option value="A">A</option><option value="B">B</option><option value="C">C</option></select>
       </div>
-      <div class="filter-group">
-        <label for="f-criticality">Criticality</label>
-        <select id="f-criticality">
-          <option value="">All levels</option>
-          <option value="High">High</option>
-          <option value="Medium">Medium</option>
-          <option value="Low">Low</option>
-        </select>
-      </div>
-      <div class="filter-group">
-        <label for="f-vendor">Vendor</label>
-        <select id="f-vendor"><option value="">All vendors</option></select>
-      </div>
-      <button class="btn btn-ghost btn-sm filter-reset" id="reset-filters">Reset filters</button>
-    </aside>
+      <button class="btn btn-primary" id="dt-ql-start-btn" disabled>Log Downtime</button>
+      <div class="ql-hint" id="dt-ql-hint"></div>
+    </div>
 
-    <div class="content">
-      <div class="table-scroll" id="table-scroll">
-        <table class="machines" id="machines-table">
-          <thead>
-            <tr id="table-head-row"></tr>
-          </thead>
-          <tbody id="table-body"></tbody>
-        </table>
-        <div class="empty-state" id="empty-state" style="display:none;">
-          <h3>No machines match here</h3>
-          <p>Try resetting filters, or add the first machine to this repository.</p>
-        </div>
+    <div id="downtime-ongoing-banner"></div>
+    <div class="stat-strip" id="downtime-stat-strip"></div>
+
+    <div class="downtime-toolbar">
+      <div class="search-wrap" style="width:260px;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+        <input type="text" id="dt-search-input" placeholder="Search machine, issue, DRI…" aria-label="Search downtime log">
+      </div>
+      <button class="btn btn-ghost btn-sm" id="dt-reset-filters">Clear search</button>
+    </div>
+
+    <div class="table-scroll" id="downtime-table-scroll">
+      <table class="machines" id="downtime-table">
+        <thead>
+          <tr id="downtime-table-head-row"></tr>
+        </thead>
+        <tbody id="downtime-table-body"></tbody>
+      </table>
+      <div class="empty-state" id="downtime-empty-state" style="display:none;">
+        <h3>No downtime logged yet</h3>
+        <p>Click "+ Start Downtime" the moment a machine goes down — it records the start time for you.</p>
       </div>
     </div>
-  </main>
+  </div>
 </div>
 
 <div class="overlay" id="overlay"></div>
@@ -249,6 +307,80 @@
   <div class="drawer-foot">
     <button class="btn btn-primary" id="save-btn" style="flex:1;">Save machine</button>
     <button class="btn" id="cancel-btn">Cancel</button>
+  </div>
+</div>
+
+<div class="drawer" id="downtime-drawer" role="dialog" aria-modal="true" aria-labelledby="downtime-drawer-title">
+  <div class="drawer-head">
+    <h2 id="downtime-drawer-title">Start Downtime</h2>
+    <button class="btn btn-ghost btn-sm" id="dt-drawer-close" aria-label="Close">✕</button>
+  </div>
+  <div class="drawer-body">
+    <form id="downtime-form">
+      <div class="field-section">
+        <h3>Machine</h3>
+        <div class="field">
+          <label for="dt-in-machine">Machine</label>
+          <input id="dt-in-machine" disabled>
+        </div>
+        <div class="field-hint" id="dt-machine-match-hint">Machine, line, lane and shift are locked once a downtime is logged — start a new entry if you picked the wrong one.</div>
+      </div>
+
+      <div class="field-section">
+        <h3>Where</h3>
+        <div class="field-row">
+          <div class="field"><label for="dt-in-date">Date</label><input id="dt-in-date" type="date" disabled></div>
+          <div class="field">
+            <label for="dt-in-shift">Shift</label>
+            <select id="dt-in-shift" disabled><option value="A">A</option><option value="B">B</option><option value="C">C</option></select>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="dt-in-line">Line</label>
+            <select id="dt-in-line" disabled><option value="">—</option><option>FATP Main Line</option><option>FATP RE</option><option>MLB Main Line</option><option>MLB RE</option></select>
+          </div>
+          <div class="field">
+            <label for="dt-in-topbot">TOP / BOT</label>
+            <select id="dt-in-topbot"><option value="">—</option><option value="TOP">TOP</option><option value="BOT">BOT</option></select>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label for="dt-in-station">Station</label><input id="dt-in-station" placeholder="e.g. ST-04"></div>
+          <div class="field">
+            <label for="dt-in-lane">Lane</label>
+            <select id="dt-in-lane" disabled><option value="">—</option><option>L1</option><option>L2</option><option>L3</option><option>L4</option><option>L5</option></select>
+          </div>
+        </div>
+      </div>
+
+      <div class="field-section" id="dt-timing-section">
+        <h3>Timing</h3>
+        <div class="field-hint" id="dt-timing-static" style="margin-bottom:10px;"></div>
+        <div class="field-row" id="dt-timing-editable" style="display:none;">
+          <div class="field"><label for="dt-in-startTime">Start time</label><input id="dt-in-startTime" type="datetime-local"></div>
+          <div class="field"><label for="dt-in-endTime">End time</label><input id="dt-in-endTime" type="datetime-local"></div>
+        </div>
+        <div class="field-hint" id="dt-computed-downtime"></div>
+      </div>
+
+      <div class="field-section">
+        <h3>Details</h3>
+        <div class="field"><label for="dt-in-issue">Issue description</label><textarea id="dt-in-issue" placeholder="What happened"></textarea></div>
+        <div class="field"><label for="dt-in-dri">DRI</label><input id="dt-in-dri" placeholder="Who's on it"></div>
+        <div class="field"><label for="dt-in-remarks">Remarks</label><textarea id="dt-in-remarks" placeholder="Any other notes"></textarea></div>
+      </div>
+
+      <div class="danger-zone" id="dt-danger-zone" style="display:none;">
+        <p>Removing an entry only removes it from this downtime log — it doesn't affect the machine record.</p>
+        <button type="button" class="btn btn-danger btn-sm" id="dt-delete-btn">Delete entry</button>
+      </div>
+    </form>
+  </div>
+  <div class="drawer-foot">
+    <button class="btn btn-ghost" id="dt-save-details-btn" style="display:none;">Save details</button>
+    <button class="btn btn-primary" id="dt-save-btn" style="flex:1;">Start Downtime</button>
+    <button class="btn" id="dt-cancel-btn">Cancel</button>
   </div>
 </div>
 
